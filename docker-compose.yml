@@ -1,0 +1,39 @@
+services:
+  api:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+    ports: ["8000:8000"]
+    environment: &app-env
+      DATABASE_URL: postgresql+asyncpg://gateway:gateway@postgres:5432/gateway
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    restart: unless-stopped
+  worker:
+    build: .
+    command: celery -A app.celery_app.celery worker --loglevel=INFO --queues=audit --concurrency=4
+    environment: *app-env
+    depends_on:
+      postgres: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    restart: unless-stopped
+  postgres:
+    image: postgres:16-alpine
+    environment: {POSTGRES_DB: gateway, POSTGRES_USER: gateway, POSTGRES_PASSWORD: gateway}
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U gateway -d gateway"], interval: 5s, timeout: 3s, retries: 10}
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory-policy noeviction
+    volumes: ["redisdata:/data"]
+    healthcheck: {test: ["CMD", "redis-cli", "ping"], interval: 5s, timeout: 3s, retries: 10}
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    healthcheck: {test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"], interval: 10s, timeout: 5s, retries: 10}
+volumes:
+  pgdata:
+  redisdata:
